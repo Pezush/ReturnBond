@@ -27,7 +27,7 @@ jobs:
           TAG=$(jq -r '.tag_name' release.json)
 
           ASSET=$(jq -r '.assets[].name' release.json \
-            | grep -E '^ReturnBond-v[0-9]+\.[0-9]+\.[0-9]+\.apk$' \
+            | grep -E '^ReturnBond-v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\.apk$' \
             | sort -V | tail -n 1)
 
           if [ -z "$ASSET" ]; then
