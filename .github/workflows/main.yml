@@ -13,11 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup Android tools
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android build tools
-        run: sdkmanager "build-tools;35.0.0"
+      - name: Install APK tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aapt
 
       - name: Find latest APK
         env:
@@ -45,8 +44,7 @@ jobs:
 
       - name: Read APK version
         run: |
-          APK="build-tools/35.0.0/aapt"
-          BADGING=$("$ANDROID_HOME/$APK" dump badging "$ASSET" | head -n 1)
+          BADGING=$(aapt dump badging "$ASSET" | head -n 1)
 
           VERSION_NAME=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
           VERSION_CODE=$(echo "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
@@ -97,9 +95,11 @@ jobs:
               lambda m: m.group(1) + code,
               source
           )
-          source = source.replace(
-              f"https://github.com/Pezush/ReturnBond/releases/download/v1.1.0/ReturnBond-v{old_version}.apk",
-              data["downloadUrl"]
+
+          source = re.sub(
+              r"https://github\.com/Pezush/ReturnBond/releases/download/[^']+",
+              data["downloadUrl"],
+              source
           )
 
           app_file.write_text(source)
