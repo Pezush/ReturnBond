@@ -1,0 +1,114 @@
+name: ReturnBond Website Auto Update
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-website:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Android tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager "build-tools;35.0.0"
+
+      - name: Find latest APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/Pezush/ReturnBond/releases/latest > release.json
+
+          TAG=$(jq -r '.tag_name' release.json)
+
+          ASSET=$(jq -r '.assets[].name' release.json \
+            | grep -E '^ReturnBond-v[0-9]+\.[0-9]+\.[0-9]+\.apk$' \
+            | sort -V | tail -n 1)
+
+          if [ -z "$ASSET" ]; then
+            echo "No matching APK found."
+            exit 1
+          fi
+
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+          gh release download "$TAG" \
+            --repo Pezush/ReturnBond \
+            --pattern "$ASSET"
+
+      - name: Read APK version
+        run: |
+          APK="build-tools/35.0.0/aapt"
+          BADGING=$("$ANDROID_HOME/$APK" dump badging "$ASSET" | head -n 1)
+
+          VERSION_NAME=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VERSION_CODE=$(echo "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+
+          if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
+            echo "Could not read APK version."
+            exit 1
+          fi
+
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Update website
+        env:
+          WEBSITE_TOKEN: ${{ secrets.WEBSITE_REPO_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${WEBSITE_TOKEN}@github.com/Pezush/ReturnBond-Website.git" website
+
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          root = Path("website")
+          update_file = root / "public/update.json"
+          app_file = root / "src/App.tsx"
+
+          version = os.environ["VERSION_NAME"]
+          code = os.environ["VERSION_CODE"]
+          tag = os.environ["TAG"]
+          asset = os.environ["ASSET"]
+
+          data = json.loads(update_file.read_text())
+          old_version = str(data["latestVersionName"])
+          old_code = str(data["latestVersionCode"])
+
+          data["latestVersionName"] = version
+          data["latestVersionCode"] = int(code)
+          data["downloadUrl"] = (
+              f"https://github.com/Pezush/ReturnBond/releases/download/{tag}/{asset}"
+          )
+
+          update_file.write_text(json.dumps(data, indent=2) + "\n")
+
+          source = app_file.read_text()
+          source = source.replace(old_version, version)
+          source = re.sub(
+              r"(?i)(version code\s+)" + re.escape(old_code) + r"\b",
+              lambda m: m.group(1) + code,
+              source
+          )
+          source = source.replace(
+              f"https://github.com/Pezush/ReturnBond/releases/download/v1.1.0/ReturnBond-v{old_version}.apk",
+              data["downloadUrl"]
+          )
+
+          app_file.write_text(source)
+          PY
+
+          cd website
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/update.json src/App.tsx
+          git diff --cached --quiet && echo "No website changes needed." && exit 0
+          git commit -m "Update ReturnBond to v${{ env.VERSION_NAME }}"
+          git push
